@@ -1,3 +1,4 @@
+import os
 import ast
 import json
 import logging
@@ -6,8 +7,15 @@ from urllib.parse import urlencode
 
 from flask import Flask
 
+import woodchipper
 from woodchipper.context import LoggingContext, logging_ctx
 from woodchipper.http.flask import WoodchipperFlask
+
+# woodchipper.configure(
+#     config=woodchipper.configs.JSONLogToStdout
+# )
+# logger = woodchipper.get_logger(__name__)
+
 
 app = Flask(__name__)
 WoodchipperFlask(app).chipperize()
@@ -53,7 +61,6 @@ def test_flask_with_woodchipper(caplog):
     ), "An exit message matching the flask:request pattern couldn't be found"
     assert flask_colon_request_exit_log["http.response.status_code"] == 200
     assert type(flask_colon_request_exit_log["http.response.content_length"]) is int
-
 
 @app.route("/raise_unhandled_exception")
 def raise_unhandled_exception():

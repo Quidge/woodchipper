@@ -1,23 +1,24 @@
 import uuid
 
-from flask import g, request
+from flask import g, request, Flask
 
 from woodchipper.context import LoggingContext, logging_ctx
 
 BLACKLISTED_HEADERS = ["authorization", "cookie"]
 
-
 class WoodchipperFlask:
-    def __init__(self, app, blacklisted_headers=BLACKLISTED_HEADERS, request_id_factory=None):
+    def __init__(self, app: Flask, blacklisted_headers=BLACKLISTED_HEADERS, request_id_factory=None):
         self._app = app
         self._blacklisted_headers = blacklisted_headers
         self._request_id_factory = request_id_factory or (lambda: str(uuid.uuid4()))
-        self.vanilla_full_dispatch_request = app.full_dispatch_request
+        self._request_logging_ctx_manager = None
+        self.vanilla_finalize_request = app.finalize_request
 
-    def wrapped_full_dispatch_request(self):
+    
+    def before_request(self):
         if not getattr(g, "request_id", None):
             g.request_id = self._request_id_factory()
-        with LoggingContext(
+        self._request_logging_ctx_manager = LoggingContext(
             "flask:request",
             **{
                 "id": g.request_id,
@@ -36,27 +37,22 @@ class WoodchipperFlask:
                 },
             },
             _prefix="http",
-        ):
-            try:
-                response = self.vanilla_full_dispatch_request()
-            except Exception:
-                # non HTTPErrors will not be caught by flask, so if that's
-                # happening we assume that it's crashing the response and
-                # thus 500 level
-                logging_ctx.update(
-                    {
-                        "http.response.status_code": 500,
-                    }
-                )
-                raise
-            else:
-                logging_ctx.update(
+        )
+        self._request_logging_ctx_manager.__enter__()
+    
+    def finalize_request(self, rv, from_error_handler: bool = False):
+        response = self.vanilla_finalize_request(rv)
+        logging_ctx.update(
                     {
                         "http.response.status_code": response.status_code,
                         "http.response.content_length": response.content_length,
                     }
                 )
-                return response
+        if self._request_logging_ctx_manager is not None:
+            self._request_logging_ctx_manager.__exit__(None, None, None)
+        return response
+
 
     def chipperize(self):
-        self._app.full_dispatch_request = self.wrapped_full_dispatch_request
+        self._app.before_request(self.before_request)
+        self._app.finalize_request = self.finalize_request
